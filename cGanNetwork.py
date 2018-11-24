@@ -1,0 +1,396 @@
+﻿
+import tensorflow as tf
+import numpy as np
+import os
+from glob import glob
+import sys
+import math
+from random import randint
+import utils
+from utils import *
+
+imgs = "E:\\1my project\\ColorNet\\code\\deepColor\\deepColor\\imgs_download\\imgs"
+imgs_edge = "E:\\1my project\\ColorNet\\code\\deepColor\\deepColor\\imgs_download\\imgs_edge"
+train_results = "E:\\1my project\\ColorNet\\1projectCode\\mangaColorization\\train_results"
+
+class Color():
+
+    def __init__(self, imgsize=256, batchsize=1):
+
+        self.batch_size = batchsize
+
+        self.batch_size_sqrt = int(math.sqrt(self.batch_size))
+
+        self.image_size = imgsize
+
+        self.output_size = imgsize
+
+        self.global_step = tf.Variable(0,trainable=False)
+
+        self.gf_dim = 64
+
+        self.df_dim = 64
+
+        self.input_colors = 1
+
+        self.input_colors2 = 3
+
+        self.output_colors = 3
+
+        self.l1_scaling = 100
+
+        self.d_bn1 = batch_norm(name='d_bn1')
+
+        self.d_bn2 = batch_norm(name='d_bn2')
+
+        self.d_bn3 = batch_norm(name='d_bn3')
+
+        self.d_bn4 = batch_norm(name='d_bn4')
+
+        self.line_images = tf.placeholder(tf.float32, [self.batch_size, self.image_size, self.image_size, self.input_colors])
+
+        self.color_images = tf.placeholder(tf.float32, [self.batch_size, self.image_size, self.image_size, self.input_colors2])
+
+        self.real_images = tf.placeholder(tf.float32, [self.batch_size, self.image_size, self.image_size, self.output_colors])
+
+
+        #下面的拼接相当于cGAN中的条件，条件包括线稿图和笔触图
+
+        #将线条图像、笔触图像在第4维进行拼接,此时第4位共有7个数
+        combined_preimage = tf.concat((self.line_images, self.color_images),3)
+
+        #将线图和笔触图拼接后的图像作为初始图像送入生成器
+        self.generated_images = self.generator(combined_preimage)
+
+
+        #拼接图像： 线条图像、笔触图像、真实图像，共有10个通道
+        #拼接图像是为了能将线图传进去，作为条件c
+        self.real_AB = tf.concat((combined_preimage, self.real_images),3) #真图
+
+        #拼接图像：线条图像、模糊图像、生成器产生的图像
+        self.fake_AB = tf.concat((combined_preimage, self.generated_images),3) #假图
+        
+
+        with tf.variable_scope("for_reuse_scope"):#很奇怪，这里不加这个调用优化函数时会报参数创建的错
+
+            # 因为真实数据和生成数据都要经过判别器，所以需要指定 reuse 是否可用
+            self.disc_true, disc_true_logits = self.discriminator(self.real_AB, reuse=False) #创建
+
+            self.disc_fake, disc_fake_logits = self.discriminator(self.fake_AB, reuse=True)
+
+        #disc_true_logits和disc_fake_logits是在最后没有加sigmoid函数的
+        #对了，这里是在教判别器对真图像的判别概率为1，对假图像的判别概率为0
+        #之前的分类任务有标签，放在一条语句中，这里需要将真图假图分开，分别给它们生成1/0标签，教它判断
+        self.d_loss_real = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(logits = disc_true_logits,labels = tf.ones_like(disc_true_logits)))
+
+        self.d_loss_fake = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(logits = disc_fake_logits,labels = tf.zeros_like(disc_fake_logits)))
+
+        #self.d_loss_real = tf.reduce_mean(tf.scalar_mul(-1,disc_true_logits)) #根据公式推导
+        #self.d_loss_fake = tf.reduce_mean(disc_fake_logits)
+        self.d_loss = self.d_loss_real + self.d_loss_fake #判别器的Loss，最大化两类图像的判别分数(假图分数接近0，真图分数接近1)
+
+        #生成器的Loss，最大化假图的判别分数（接近1），并且加入L1损失
+        #这里是在教生成器，教它尽量生成能被判为1的假图像，如何生成？最小化真图和假图之间的L1损失
+        self.g_loss = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(logits = disc_fake_logits,labels = tf.ones_like(disc_fake_logits))) \
+                      + self.l1_scaling * tf.reduce_mean(tf.abs(self.real_images - self.generated_images))
+
+        #self.g_loss = tf.reduce_mean(tf.scalar_mul(-1,disc_fake_logits))
+
+
+        t_vars = tf.trainable_variables()
+
+        self.d_vars = [var for var in t_vars if 'd_' in var.name] #这里变量名起到很大作用，区分生成器的变量和判别器的变量，分开训练
+
+        self.g_vars = [var for var in t_vars if 'g_' in var.name]
+
+
+        self.d_optim = tf.train.AdamOptimizer(0.0002, beta1=0.5).minimize(self.d_loss, var_list=self.d_vars,global_step = self.global_step)
+
+        self.g_optim = tf.train.AdamOptimizer(0.0002, beta1=0.5).minimize(self.g_loss, var_list=self.g_vars)
+
+        tf.summary.scalar('d_loss', self.d_loss)
+        tf.summary.scalar('g_loss', self.g_loss)
+        #self.clip_d_op = [var.assign(tf.clip_by_value(var,CLIP[0],CLIP[1])) for var in self.d_vars]
+
+    #判别器,卷积层抽取特征，最后加一个全连接层进行分类
+    def discriminator(self, image, y=None, reuse=False):
+        # image is 256 x 256 x (input_c_dim + output_c_dim)
+        if reuse:
+            tf.get_variable_scope().reuse_variables()
+        else:
+            assert tf.get_variable_scope().reuse == False
+        
+        #定义conv2d卷积方法时已经定义了是全零填充，步长为2，所以这里输出维度减半
+        h0 = lrelu(conv2d(image, self.df_dim, name='d_h0_conv')) # h0 is (128 x 128 x self.df_dim)
+        h1 = lrelu(self.d_bn1(conv2d(h0, self.df_dim*2, name='d_h1_conv'))) # h1 is (64 x 64 x self.df_dim*2)
+        h2 = lrelu(self.d_bn2(conv2d(h1, self.df_dim*4, name='d_h2_conv'))) # h2 is (32 x 32 x self.df_dim*4)
+        h3 = lrelu(self.d_bn4(conv2d(h2, self.df_dim*8, d_h=1, d_w=1, name='d_h3_conv'))) # h3 is (16 x 16 x self.df_dim*8)
+        h4 = linear(tf.reshape(h3, [self.batch_size, -1]), 1, 'd_h3_lin') #加一层全连接层，输出为一个列向量，即batch中每个图像的判别概率
+        #return tf.nn.sigmoid(h4), h4
+        return None,h4
+
+    #生成器，输入是线图（+模糊图）
+    #先下采样再上采样，U-Net网络结构
+    def generator(self, img_in):
+        s = self.output_size #256
+        s2, s4, s8, s16, s32, s64, s128 = int(s/2), int(s/4), int(s/8), int(s/16), int(s/32), int(s/64), int(s/128)
+        # image is (256 x 256 x input_c_dim)
+        e1 = conv2d(img_in, self.gf_dim, name='g_e1_conv') # e1 is (128 x 128 x 64)
+        e2 = bn(conv2d(lrelu(e1), self.gf_dim*2, name='g_e2_conv')) # e2 is (64 x 64 x 128)
+        e3 = bn(conv2d(lrelu(e2), self.gf_dim*4, name='g_e3_conv')) # e3 is (32 x 32 x 256)
+        e4 = bn(conv2d(lrelu(e3), self.gf_dim*8, name='g_e4_conv')) # e4 is (16 x 16 x 512)
+        e5 = bn(conv2d(lrelu(e4), self.gf_dim*8, name='g_e5_conv')) # e5 is (8 x 8 x 512)
+
+
+        self.d4, self.d4_w, self.d4_b = deconv2d(tf.nn.relu(e5), [self.batch_size, s16, s16, self.gf_dim*8], name='g_d4', with_w=True) #16*16*512
+        d4 = bn(self.d4) #bn是对每一层的参数进行标准化
+
+        #add skip connections
+        d4 = tf.concat((d4, e4),3) #将还原的图像与特征图像进行拼接，U型结构的特点，为了精准定位        
+        # d4 is (16 x 16 x self.gf_dim*8*2)
+
+        self.d5, self.d5_w, self.d5_b = deconv2d(tf.nn.relu(d4), [self.batch_size, s8, s8, self.gf_dim*4], name='g_d5', with_w=True)
+        d5 = bn(self.d5)
+        d5 = tf.concat((d5, e3),3)
+        # d5 is (32 x 32 x self.gf_dim*4*2)
+
+        self.d6, self.d6_w, self.d6_b = deconv2d(tf.nn.relu(d5), [self.batch_size, s4, s4, self.gf_dim*2], name='g_d6', with_w=True)
+        d6 = bn(self.d6)
+        d6 = tf.concat((d6, e2), 3)
+        # d6 is (64 x 64 x self.gf_dim*2*2)
+
+        self.d7, self.d7_w, self.d7_b = deconv2d(tf.nn.relu(d6), [self.batch_size, s2, s2, self.gf_dim], name='g_d7', with_w=True)
+        d7 = bn(self.d7)
+        d7 = tf.concat((d7, e1), 3)
+        # d7 is (128 x 128 x self.gf_dim*1*2)
+
+        self.d8, self.d8_w, self.d8_b = deconv2d(tf.nn.relu(d7), [self.batch_size, s, s, self.output_colors], name='g_d8', with_w=True) #最后一层输出为3通道图像
+        # d8 is (256 x 256 x output_c_dim) 最后的生成图像是3个通道的
+
+        return tf.nn.tanh(self.d8) #最后一层的激活函数为tanh函数
+
+    #为了生成hint图
+    def imageblur(self, cimg, sampling=False):
+
+        if sampling:
+
+            cimg = cimg * 1 + np.ones_like(cimg) * 0 * 255 #这里决定了笔触颜色的深浅
+
+        else:
+
+            for i in range(30):
+
+                randx = randint(0,205)
+
+                randy = randint(0,205)
+
+                #将特定的几个随机图像块赋为白色，为了减少生成器对hint的依赖
+                cimg[randx:randx+50, randy:randy+50] = 255 
+
+        return cv2.blur(cimg,(100,100)) #blur模糊图像
+
+    def train(self):
+
+        self.loadmodel()
+
+        data = glob(os.path.join(imgs, str(1), "*.jpg"))
+
+        edge = glob(os.path.join(imgs_edge, str(1), "*.jpg"))
+
+        base = np.array([get_image(sample_file) for sample_file in data[0:self.batch_size]])  # 返回标准大小的图像batch
+        line = np.array([get_image(sample_file) for sample_file in edge[0:self.batch_size]])
+
+        base_normalized = base / 255.0
+        line_normalized = line / 255.0
+
+        # 获取线图,线图只有一个通道，所以后面要扩维
+        base_edge = line_normalized[:, :, :, 0]
+        base_edge = np.expand_dims(base_edge, 3)
+
+        # 模糊图像是为了生成能用于输入的初始图像
+        base_colors = np.array([self.imageblur(ba) for ba in base]) / 255.0
+
+        # 这里保存的是将batch中的图像拼接到一起，如batch=4，则上2张，下2张
+        ims(train_results + "/base.png", merge_color(base_normalized, [self.batch_size_sqrt, self.batch_size_sqrt]))
+
+        ims(train_results + "/base_line.jpg", merge(base_edge, [self.batch_size_sqrt, self.batch_size_sqrt]))
+
+        ims(train_results + "/base_colors.jpg", merge_color(base_colors, [self.batch_size_sqrt, self.batch_size_sqrt]))
+
+        datalen = len(data)  # 获取训练图像总数
+
+        for e in range(20):  # 将所有训练数据循环几遍
+
+            for i in range(datalen // self.batch_size):  # 这里循环获取所有训练图像组成batch，每次循环按序获取一组新的batch
+
+                k = randint(0, datalen // self.batch_size - 1)
+                batch_files = data[k * self.batch_size:(k + 1) * self.batch_size]  # 获取当前batch图像
+
+                batch = np.array([get_image(batch_file) for batch_file in batch_files])  # 获取图像值并标准化为256*256
+                # 彩色真图
+                batch_normalized = batch / 255.0
+
+                # 线稿图
+                edge_files = edge[k * self.batch_size:(k + 1) * self.batch_size]  # 获取当前batch图像
+
+                batch_edge = np.array([get_image(edge_file) for edge_file in edge_files]) / 255.0
+
+                batch_edge = np.expand_dims(batch_edge[:, :, :, 0], 3)
+
+                # 笔触图
+                batch_colors = np.array([self.imageblur(ba) for ba in batch]) / 255.0
+
+                # feed进去的依次是原彩色图、线图、模糊图，这里是在分别训练判别器和生成器
+
+                d_loss, _, step = self.sess.run([self.d_loss, self.d_optim, self.global_step],
+                                                feed_dict={self.real_images: batch_normalized,
+                                                           self.line_images: batch_edge,
+                                                           self.color_images: batch_colors})
+                # self.sess.run(self.clip_d_op)
+
+                #if i % 2 == 0:
+                g_loss, _ = self.sess.run([self.g_loss, self.g_optim],
+                                          feed_dict={self.real_images: batch_normalized,
+                                                     self.line_images: batch_edge,
+                                                     self.color_images: batch_colors})
+
+                print("%d: [%d / %d] d_loss %f, g_loss %f" % (e, i, (datalen / self.batch_size), d_loss, g_loss))
+
+                # 每50次打印一下生成器的生成图片结果
+                if i % 50 == 0:
+                    recreation = self.sess.run(self.generated_images, feed_dict={self.real_images: base_normalized,
+                                                                                 self.line_images: base_edge,
+                                                                                 self.color_images: base_colors})
+
+                    ims(train_results + '/' + str(step) + ".jpg",
+                        merge_color(recreation, [self.batch_size_sqrt, self.batch_size_sqrt]))
+
+                    # self.save("./checkpoint", step)
+                    result = self.sess.run(self.merged,
+                                           feed_dict={self.real_images: batch_normalized, self.line_images: batch_edge,
+                                                      self.color_images: batch_colors})  # 计算需要写入的日志数据
+                    self.writer.add_summary(result, step)  # 将日志数据写入文件
+
+    def loadmodel(self, load_discrim=True):
+
+        self.sess = tf.Session()
+
+        self.sess.run(tf.global_variables_initializer())
+
+        self.merged = tf.summary.merge_all()  # 将图形、训练过程等数据合并在一起
+        self.writer = tf.summary.FileWriter('logs', self.sess.graph)  # 将训练日志写入到logs文件夹下
+
+        if load_discrim:
+
+            self.saver = tf.train.Saver()
+
+        else:
+
+            self.saver = tf.train.Saver(self.g_vars)
+
+
+
+        if self.load("./checkpoint"):
+
+            print("Loaded")
+
+        else:
+
+            print ("Load failed")
+
+
+
+    def sample(self):
+
+        self.loadmodel(False)
+
+        data = glob(os.path.join("imgs", "cuty.jpg"))
+
+        data_m = glob(os.path.join("imgs", "cuty_m.jpg"))
+
+        datalen = len(data)
+
+
+
+        for i in range(min(100,datalen // self.batch_size)):
+
+            batch_files = data[i*self.batch_size:(i+1)*self.batch_size]
+            batch_files_m = data_m[i*self.batch_size:(i+1)*self.batch_size]
+
+            batch = np.array([cv2.resize(imread(batch_file), (512,512)) for batch_file in batch_files])
+            batch_m = np.array([cv2.resize(imread(batch_file_m), (512,512)) for batch_file_m in batch_files_m])
+
+            batch_normalized = batch/255.0 #实际上生成器不会用到这个
+
+            batch_edge = batch_normalized[:,:,:,0]
+
+            batch_edge = np.expand_dims(batch_edge, 3)
+
+            #batch_colors = np.array([self.imageblur(ba,True) for ba in batch_m]) / 255.0
+            isColored = abs(batch_m / 255.0 - batch_normalized)> 0.1
+            batch_m = get_colorPic(isColored,batch_m / 255.0) * 255
+            batch_colors = np.array([self.imageblur(ba,True) for ba in batch_m]) / 255.0
+            
+
+            #batch_edge = batch_normalized[:,:,:,0]
+            #batch_edge = np.expand_dims(batch_edge, 3)
+
+            ims("results/colors_"+str(i)+".jpg",merge_color(batch_colors, [self.batch_size_sqrt, self.batch_size_sqrt]))
+
+            recreation = self.sess.run(self.generated_images, feed_dict={self.real_images: batch_normalized, self.line_images: batch_edge, self.color_images: batch_colors})
+
+            ims("results/sample_"+str(i)+".jpg",merge_color(recreation, [self.batch_size_sqrt, self.batch_size_sqrt]))
+
+            #ims("results/sample_"+str(i)+"_origin.jpg",merge_color(batch_normalized, [self.batch_size_sqrt, self.batch_size_sqrt]))
+
+            ims("results/edge_"+str(i)+"_line.jpg",merge_color(batch_edge, [self.batch_size_sqrt, self.batch_size_sqrt]))
+
+            #ims("results/sample_"+str(i)+"_color.jpg",merge_color(batch_colors, [self.batch_size_sqrt, self.batch_size_sqrt]))
+
+
+    def save(self, checkpoint_dir, step):
+
+        model_name = "model"
+
+        model_dir = "tr/download"
+
+        checkpoint_dir = os.path.join(checkpoint_dir, model_dir)
+
+        if not os.path.exists(checkpoint_dir):
+
+            os.makedirs(checkpoint_dir)
+
+
+
+        self.saver.save(self.sess,
+
+                        os.path.join(checkpoint_dir, model_name),
+
+                        global_step=step)
+
+
+
+    def load(self, checkpoint_dir):
+
+        print(" [*] Reading checkpoint...")
+
+        model_dir = "tr"
+
+        checkpoint_dir = os.path.join(checkpoint_dir, model_dir)
+
+
+        ckpt = tf.train.get_checkpoint_state(checkpoint_dir)
+
+        if ckpt and ckpt.model_checkpoint_path:
+
+            ckpt_name = os.path.basename(ckpt.model_checkpoint_path)
+
+            self.saver.restore(self.sess, os.path.join(checkpoint_dir, ckpt_name))
+
+            return True
+
+        else:
+
+            return False
+
+
