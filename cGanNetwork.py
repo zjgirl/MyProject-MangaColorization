@@ -9,9 +9,9 @@ from random import randint
 import utils
 from utils import *
 
-imgs = "E:\\1my project\\ColorNet\\code\\deepColor\\deepColor\\imgs_download\\imgs"
-imgs_edge = "E:\\1my project\\ColorNet\\code\\deepColor\\deepColor\\imgs_download\\imgs_edge"
-train_results = "E:\\1my project\\ColorNet\\1projectCode\\mangaColorization\\train_results"
+imgs = "E:\\1myproject\\ColorNet\\code\\deepColor\\deepColor\\imgs_download\\imgs"
+imgs_edge = "E:\\1myproject\\ColorNet\\code\\deepColor\\deepColor\\imgs_download\\imgs_edge"
+train_results = "E:\\1myproject\\ColorNet\\1projectCode\\MyProject-MangaColorization\\results"
 
 class Color():
 
@@ -169,25 +169,6 @@ class Color():
 
         return tf.nn.tanh(self.d8) #最后一层的激活函数为tanh函数
 
-    #为了生成hint图
-    def imageblur(self, cimg, sampling=False):
-
-        if sampling:
-
-            cimg = cimg * 1 + np.ones_like(cimg) * 0 * 255 #这里决定了笔触颜色的深浅
-
-        else:
-
-            for i in range(30):
-
-                randx = randint(0,205)
-
-                randy = randint(0,205)
-
-                #将特定的几个随机图像块赋为白色，为了减少生成器对hint的依赖
-                cimg[randx:randx+50, randy:randy+50] = 255 
-
-        return cv2.blur(cimg,(100,100)) #blur模糊图像
 
     def train(self):
 
@@ -208,7 +189,7 @@ class Color():
         base_edge = np.expand_dims(base_edge, 3)
 
         # 模糊图像是为了生成能用于输入的初始图像
-        base_colors = np.array([self.imageblur(ba) for ba in base]) / 255.0
+        base_colors = np.array([colorGen(ba) for ba in base]) / 255.0
 
         # 这里保存的是将batch中的图像拼接到一起，如batch=4，则上2张，下2张
         ims(train_results + "/base.png", merge_color(base_normalized, [self.batch_size_sqrt, self.batch_size_sqrt]))
@@ -238,7 +219,7 @@ class Color():
                 batch_edge = np.expand_dims(batch_edge[:, :, :, 0], 3)
 
                 # 笔触图
-                batch_colors = np.array([self.imageblur(ba) for ba in batch]) / 255.0
+                batch_colors = np.array([colorGen(ba) for ba in batch]) / 255.0
 
                 # feed进去的依次是原彩色图、线图、模糊图，这里是在分别训练判别器和生成器
 
@@ -326,10 +307,10 @@ class Color():
 
             batch_edge = np.expand_dims(batch_edge, 3)
 
-            #batch_colors = np.array([self.imageblur(ba,True) for ba in batch_m]) / 255.0
+            #batch_colors = np.array([colorGen(ba,True) for ba in batch_m]) / 255.0
             isColored = abs(batch_m / 255.0 - batch_normalized)> 0.1
             batch_m = get_colorPic(isColored,batch_m / 255.0) * 255
-            batch_colors = np.array([self.imageblur(ba,True) for ba in batch_m]) / 255.0
+            batch_colors = np.array([colorGen(ba,True) for ba in batch_m]) / 255.0
             
 
             #batch_edge = batch_normalized[:,:,:,0]

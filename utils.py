@@ -127,21 +127,13 @@ def get_colorPic(isColored,pic_m):
     corlor_pic[isColored] = pic_m[isColored]
     return corlor_pic
 
-def imageblur(self, cimg, sampling=False):
 
-        if sampling:
+def colorGen(cimg, imagesize = 256, blocksize = 8, sampling=False):
+    w, h, c = np.shape(cimg)
+    hint = 255 - np.zeros((w, h, c))
 
-            cimg = cimg * 1 + np.ones_like(cimg) * 0 * 255 #这里决定了笔触颜色的深浅
-
-        else:
-
-            for i in range(30):
-
-                randx = randint(0,205)
-
-                randy = randint(0,205)
-
-                #将特定的几个随机图像块赋为白色，为了减少生成器对hint的依赖
-                cimg[randx:randx+50, randy:randy+50] = 255 
-
-        return cv2.blur(cimg,(100,100)) #blur模糊图像
+    for i in range(30):
+        randx = randint(0, imagesize - blocksize - 1)
+        randy = randint(0, imagesize - blocksize - 1)
+        hint[randx:randx + blocksize, randy:randy + blocksize] = np.mean(np.mean(cimg[randx:randx + blocksize, randy:randy + blocksize], axis=0),axis=0)
+    return hint
