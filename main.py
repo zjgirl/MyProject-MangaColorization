@@ -1,5 +1,6 @@
-
+import tensorflow as tf
 from cGanNetwork import Color
+from CreateSketchModel import *
 
 if __name__ == '__main__':
 
@@ -8,15 +9,15 @@ if __name__ == '__main__':
     cmd = input()
 
     if cmd == "train":
-
-        c = Color()
-
+        createModel(batchSize=16, imageSize=256)
+        images_tensor, feature_tensor = readModel()
+        c = Color(model_tensor=(images_tensor, feature_tensor))
         c.train()
 
     elif cmd == "sample":
-
-        c = Color(512,1)
-
+        createModel(batchSize=1, imageSize=512)
+        images_tensor, feature_tensor = readModel()
+        c = Color(model_tensor=(images_tensor, feature_tensor), imgsize=512, batchsize=1)
         c.sample()
 
     else:

@@ -128,7 +128,7 @@ def get_colorPic(isColored,pic_m):
     return corlor_pic
 
 
-def colorGen(cimg, imagesize = 256, blocksize = 8, sampling=False):
+def colorGen(cimg, imagesize = 256, blocksize = 8):
     w, h, c = np.shape(cimg)
     hint = 255 - np.zeros((w, h, c))
 

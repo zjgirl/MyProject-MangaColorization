@@ -15,7 +15,9 @@ train_results = "E:\\1myproject\\ColorNet\\1projectCode\\MyProject-MangaColoriza
 
 class Color():
 
-    def __init__(self, imgsize=256, batchsize=1):
+    def __init__(self, model_tensor=(None,None), imgsize=256, batchsize=16):
+
+        self.images_tensor, self.feature_tensor = model_tensor
 
         self.batch_size = batchsize
 
@@ -24,6 +26,10 @@ class Color():
         self.image_size = imgsize
 
         self.output_size = imgsize
+
+        self.feature_size = imgsize // 8 #特征size，在输入的第三层加入特征
+
+        self.feature_dim = 256 #特征深度
 
         self.global_step = tf.Variable(0,trainable=False)
 
@@ -53,6 +59,8 @@ class Color():
 
         self.real_images = tf.placeholder(tf.float32, [self.batch_size, self.image_size, self.image_size, self.output_colors])
 
+        #添加特征输入的placeholder，将在生成器的第3层加入特征
+        self.line_features = tf.placeholder(tf.float32, [self.batch_size, self.feature_size, self.feature_size, self.feature_dim])
 
         #下面的拼接相当于cGAN中的条件，条件包括线稿图和笔触图
 
@@ -69,7 +77,7 @@ class Color():
 
         #拼接图像：线条图像、模糊图像、生成器产生的图像
         self.fake_AB = tf.concat((combined_preimage, self.generated_images),3) #假图
-        
+
 
         with tf.variable_scope("for_reuse_scope"):#很奇怪，这里不加这个调用优化函数时会报参数创建的错
 
@@ -119,12 +127,16 @@ class Color():
             tf.get_variable_scope().reuse_variables()
         else:
             assert tf.get_variable_scope().reuse == False
-        
+
         #定义conv2d卷积方法时已经定义了是全零填充，步长为2，所以这里输出维度减半
         h0 = lrelu(conv2d(image, self.df_dim, name='d_h0_conv')) # h0 is (128 x 128 x self.df_dim)
         h1 = lrelu(self.d_bn1(conv2d(h0, self.df_dim*2, name='d_h1_conv'))) # h1 is (64 x 64 x self.df_dim*2)
         h2 = lrelu(self.d_bn2(conv2d(h1, self.df_dim*4, name='d_h2_conv'))) # h2 is (32 x 32 x self.df_dim*4)
-        h3 = lrelu(self.d_bn4(conv2d(h2, self.df_dim*8, d_h=1, d_w=1, name='d_h3_conv'))) # h3 is (16 x 16 x self.df_dim*8)
+
+        hn1 = tf.concat((h2,self.line_features),3) #add feature: en is (32 x 32 x 512)
+        hn2 = lrelu(self.d_bn3(conv2d(hn1,self.df_dim*4,d_h=1,d_w=1,name='d_hn2_conv'))) #en2 is (32 x 32 x256)
+
+        h3 = lrelu(self.d_bn4(conv2d(hn2, self.df_dim*8, d_h=1, d_w=1, name='d_h3_conv'))) # h3 is (16 x 16 x self.df_dim*8)
         h4 = linear(tf.reshape(h3, [self.batch_size, -1]), 1, 'd_h3_lin') #加一层全连接层，输出为一个列向量，即batch中每个图像的判别概率
         #return tf.nn.sigmoid(h4), h4
         return None,h4
@@ -138,7 +150,12 @@ class Color():
         e1 = conv2d(img_in, self.gf_dim, name='g_e1_conv') # e1 is (128 x 128 x 64)
         e2 = bn(conv2d(lrelu(e1), self.gf_dim*2, name='g_e2_conv')) # e2 is (64 x 64 x 128)
         e3 = bn(conv2d(lrelu(e2), self.gf_dim*4, name='g_e3_conv')) # e3 is (32 x 32 x 256)
-        e4 = bn(conv2d(lrelu(e3), self.gf_dim*8, name='g_e4_conv')) # e4 is (16 x 16 x 512)
+        
+        #还有多种拼接方法可以尝试
+        en1 = tf.concat((e3,self.line_features),3) #add feature: en is (32 x 32 x 512)
+        en2 = bn(conv2d(lrelu(en1),self.gf_dim*4,d_h=1,d_w=1,name='g_en2_conv')) #en2 is (32 x 32 x256)
+
+        e4 = bn(conv2d(lrelu(en2), self.gf_dim*8, name='g_e4_conv')) # e4 is (16 x 16 x 512)
         e5 = bn(conv2d(lrelu(e4), self.gf_dim*8, name='g_e5_conv')) # e5 is (8 x 8 x 512)
 
 
@@ -146,12 +163,12 @@ class Color():
         d4 = bn(self.d4) #bn是对每一层的参数进行标准化
 
         #add skip connections
-        d4 = tf.concat((d4, e4),3) #将还原的图像与特征图像进行拼接，U型结构的特点，为了精准定位        
+        d4 = tf.concat((d4, e4),3) #将还原的图像与特征图像进行拼接，U型结构的特点，为了精准定位
         # d4 is (16 x 16 x self.gf_dim*8*2)
 
         self.d5, self.d5_w, self.d5_b = deconv2d(tf.nn.relu(d4), [self.batch_size, s8, s8, self.gf_dim*4], name='g_d5', with_w=True)
         d5 = bn(self.d5)
-        d5 = tf.concat((d5, e3),3)
+        d5 = tf.concat((d5, en2),3)
         # d5 is (32 x 32 x self.gf_dim*4*2)
 
         self.d6, self.d6_w, self.d6_b = deconv2d(tf.nn.relu(d5), [self.batch_size, s4, s4, self.gf_dim*2], name='g_d6', with_w=True)
@@ -188,7 +205,7 @@ class Color():
         base_edge = line_normalized[:, :, :, 0]
         base_edge = np.expand_dims(base_edge, 3)
 
-        # 模糊图像是为了生成能用于输入的初始图像
+        # 笔触生成
         base_colors = np.array([colorGen(ba) for ba in base]) / 255.0
 
         # 这里保存的是将batch中的图像拼接到一起，如batch=4，则上2张，下2张
@@ -220,20 +237,29 @@ class Color():
 
                 # 笔触图
                 batch_colors = np.array([colorGen(ba) for ba in batch]) / 255.0
+				
+                # 特征图,需要计算扩展的维度
+                batch_features = self.sess.run(self.feature_tensor,feed_dict={self.images_tensor:batch_edge})
+                feashape = np.shape(batch_features)
+                expandNum = int((feashape[1]-(self.feature_size - feashape[1]))//2) #想要拼接中间的部分，获得应该从第几行开始抽取
+                concate_1 = np.concatenate((batch_features, batch_features[:, expandNum:(feashape[1] - expandNum), :, :]), 1)
+                batch_features = np.concatenate((concate_1, concate_1[:, :, expandNum:(feashape[1] - expandNum), :]), 2)
 
                 # feed进去的依次是原彩色图、线图、模糊图，这里是在分别训练判别器和生成器
 
                 d_loss, _, step = self.sess.run([self.d_loss, self.d_optim, self.global_step],
                                                 feed_dict={self.real_images: batch_normalized,
                                                            self.line_images: batch_edge,
-                                                           self.color_images: batch_colors})
+                                                           self.color_images: batch_colors,
+														   self.line_features: batch_features})
                 # self.sess.run(self.clip_d_op)
 
                 #if i % 2 == 0:
                 g_loss, _ = self.sess.run([self.g_loss, self.g_optim],
                                           feed_dict={self.real_images: batch_normalized,
                                                      self.line_images: batch_edge,
-                                                     self.color_images: batch_colors})
+                                                     self.color_images: batch_colors,
+													 self.line_features: batch_features})
 
                 print("%d: [%d / %d] d_loss %f, g_loss %f" % (e, i, (datalen / self.batch_size), d_loss, g_loss))
 
@@ -241,15 +267,18 @@ class Color():
                 if i % 50 == 0:
                     recreation = self.sess.run(self.generated_images, feed_dict={self.real_images: base_normalized,
                                                                                  self.line_images: base_edge,
-                                                                                 self.color_images: base_colors})
+                                                                                 self.color_images: base_colors,
+                                                                                 self.line_features: batch_features})
 
                     ims(train_results + '/' + str(step) + ".jpg",
                         merge_color(recreation, [self.batch_size_sqrt, self.batch_size_sqrt]))
 
                     # self.save("./checkpoint", step)
                     result = self.sess.run(self.merged,
-                                           feed_dict={self.real_images: batch_normalized, self.line_images: batch_edge,
-                                                      self.color_images: batch_colors})  # 计算需要写入的日志数据
+                                           feed_dict={self.real_images: batch_normalized, 
+													  self.line_images: batch_edge,
+                                                      self.color_images: batch_colors,
+													  self.line_features: batch_features})  # 计算需要写入的日志数据
                     self.writer.add_summary(result, step)  # 将日志数据写入文件
 
     def loadmodel(self, load_discrim=True):
@@ -307,18 +336,21 @@ class Color():
 
             batch_edge = np.expand_dims(batch_edge, 3)
 
-            #batch_colors = np.array([colorGen(ba,True) for ba in batch_m]) / 255.0
-            isColored = abs(batch_m / 255.0 - batch_normalized)> 0.1
-            batch_m = get_colorPic(isColored,batch_m / 255.0) * 255
-            batch_colors = np.array([colorGen(ba,True) for ba in batch_m]) / 255.0
+            batch_colors = np.array([colorGen(ba) for ba in batch_m]) / 255.0
             
+			# 特征图,需要计算扩展的维度
+            batch_features = self.sess.run(self.feature_tensor, feed_dict={self.images_tensor: batch_edge})
+            feashape = np.shape(batch_features)
+            expandNum = int((feashape[1] - (self.feature_size - feashape[1])) // 2 ) # 想要拼接中间的部分，获得应该从第几行开始抽取
+            concate_1 = np.concatenate((batch_features, batch_features[:, expandNum:(feashape[1] - expandNum), :, :]), 1)
+            batch_features = np.concatenate((concate_1, concate_1[:, :, expandNum:(feashape[1] - expandNum), :]), 2)
 
             #batch_edge = batch_normalized[:,:,:,0]
             #batch_edge = np.expand_dims(batch_edge, 3)
 
             ims("results/colors_"+str(i)+".jpg",merge_color(batch_colors, [self.batch_size_sqrt, self.batch_size_sqrt]))
 
-            recreation = self.sess.run(self.generated_images, feed_dict={self.real_images: batch_normalized, self.line_images: batch_edge, self.color_images: batch_colors})
+            recreation = self.sess.run(self.generated_images, feed_dict={self.real_images: batch_normalized, self.line_images: batch_edge, self.color_images: batch_colors, self.line_features: batch_features})
 
             ims("results/sample_"+str(i)+".jpg",merge_color(recreation, [self.batch_size_sqrt, self.batch_size_sqrt]))
 
