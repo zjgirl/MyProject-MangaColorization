@@ -99,11 +99,24 @@ class Color():
 
         #生成器的Loss，最大化假图的判别分数（接近1），并且加入L1损失
         #这里是在教生成器，教它尽量生成能被判为1的假图像，如何生成？最小化真图和假图之间的L1损失
-        self.g_loss = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(logits = disc_fake_logits,labels = tf.ones_like(disc_fake_logits))) \
-                      + self.l1_scaling * tf.reduce_mean(tf.abs(self.real_images - self.generated_images))
+        self.g_loss = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(logits = disc_fake_logits,labels = tf.ones_like(disc_fake_logits)))
+        self.l1_loss =  self.l1_scaling * tf.reduce_mean(tf.abs(self.real_images - self.generated_images))
 
-        #self.g_loss = tf.reduce_mean(tf.scalar_mul(-1,disc_fake_logits))
+        # 全局方差损失
+        '''
+        self.generated_orig = tf.slice(self.generated_images, [0, 0, 0, 0], [-1, self.image_size-1, self.image_size-1, -1])
+        self.generated_right = tf.slice(self.generated_images, [0, 0, 1, 0], [-1, self.image_size-1, -1, -1])
+        self.generated_down = tf.slice(self.generated_images, [0, 1, 0, 0], [-1, -1, self.image_size-1, -1])
+        self.tv_loss = 1e-3 * tf.reduce_sum(tf.sqrt(tf.square(self.generated_orig - self.generated_right) + tf.square(
+            self.generated_orig - self.generated_down)))
+        '''
+        tv_y_size = self._tensor_size(self.generated_images[:, 1:, :, :])
+        tv_x_size = self._tensor_size(self.generated_images[:, :, 1:, :])
+        y_tv = tf.nn.l2_loss(self.generated_images[:, 1:, :, :] - self.generated_images[:, :self.image_size - 1, :, :])
+        x_tv = tf.nn.l2_loss(self.generated_images[:, :, 1:, :] - self.generated_images[:, :, :self.image_size - 1, :])
+        self.tv_loss = 6 * self.l1_scaling * (x_tv / tv_x_size + y_tv / tv_y_size) / self.batch_size
 
+        self.g_loss += (self.tv_loss + self.l1_loss)
 
         t_vars = tf.trainable_variables()
 
@@ -119,6 +132,11 @@ class Color():
         tf.summary.scalar('d_loss', self.d_loss)
         tf.summary.scalar('g_loss', self.g_loss)
         #self.clip_d_op = [var.assign(tf.clip_by_value(var,CLIP[0],CLIP[1])) for var in self.d_vars]
+
+    def _tensor_size(self, tensor):
+        from operator import mul
+        import functools
+        return functools.reduce(mul, (d.value for d in tensor.get_shape()[1:]), 1)
 
     #判别器,卷积层抽取特征，最后加一个全连接层进行分类
     def discriminator(self, image, y=None, reuse=False):
@@ -191,9 +209,13 @@ class Color():
 
         self.loadmodel()
 
-        data = glob(os.path.join(imgs, str(1), "*.jpg"))
-
-        edge = glob(os.path.join(imgs_edge, str(1), "*.jpg"))
+        data = []
+        edge = []
+        #for i in range(1, 29):
+        d = glob(os.path.join(imgs, str(1), "*.jpg"))
+        data.extend(d)
+        e = glob(os.path.join(imgs_edge, str(1), "*.jpg"))
+        edge.extend(e)
 
         base = np.array([get_image(sample_file) for sample_file in data[0:self.batch_size]])  # 返回标准大小的图像batch
         line = np.array([get_image(sample_file) for sample_file in edge[0:self.batch_size]])
@@ -251,7 +273,7 @@ class Color():
                                                 feed_dict={self.real_images: batch_normalized,
                                                            self.line_images: batch_edge,
                                                            self.color_images: batch_colors,
-														   self.line_features: batch_features})
+                                                           self.line_features: batch_features})
                 # self.sess.run(self.clip_d_op)
 
                 #if i % 2 == 0:
@@ -259,7 +281,7 @@ class Color():
                                           feed_dict={self.real_images: batch_normalized,
                                                      self.line_images: batch_edge,
                                                      self.color_images: batch_colors,
-													 self.line_features: batch_features})
+                                                     self.line_features: batch_features})
 
                 print("%d: [%d / %d] d_loss %f, g_loss %f" % (e, i, (datalen / self.batch_size), d_loss, g_loss))
 
@@ -280,6 +302,8 @@ class Color():
                                                       self.color_images: batch_colors,
 													  self.line_features: batch_features})  # 计算需要写入的日志数据
                     self.writer.add_summary(result, step)  # 将日志数据写入文件
+                if (e != 0 and i == 0) or (e == 9 and i == datalen // self.batch_size - 1):
+                    self.save("./checkpoint", step)
 
     def loadmodel(self, load_discrim=True):
 
