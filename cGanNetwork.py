@@ -8,10 +8,16 @@ import math
 from random import randint
 import utils
 from utils import *
+from utils import _tensor_size
+from vgg19_net import VGG
 
 imgs = "E:\\1myproject\\ColorNet\\code\\deepColor\\deepColor\\imgs_download\\imgs"
 imgs_edge = "E:\\1myproject\\ColorNet\\code\\deepColor\\deepColor\\imgs_download\\imgs_edge"
 train_results = "E:\\1myproject\\ColorNet\\1projectCode\\MyProject-MangaColorization\\results"
+vgg_mat = "imagenet-vgg-verydeep-19.mat"
+
+CONTENT_LAYER = 'relu3_3'
+STYLE_LAYERS = ('relu1_2', 'relu2_2', 'relu3_3', 'relu4_3')
 
 class Color():
 
@@ -45,6 +51,10 @@ class Color():
 
         self.l1_scaling = 100
 
+        self.tv_scaling = 600
+
+        self.vgg_scaling = 1
+
         self.d_bn1 = batch_norm(name='d_bn1')
 
         self.d_bn2 = batch_norm(name='d_bn2')
@@ -70,6 +80,11 @@ class Color():
         #将线图和笔触图拼接后的图像作为初始图像送入生成器
         self.generated_images = self.generator(combined_preimage)
 
+        #计算vgg特征损失
+        vgg = VGG(vgg_mat)
+        self.real_vgg = vgg.net(vgg.preprocess(self.real_images))
+        self.gen_vgg = vgg.net(vgg.preprocess(self.generated_images))
+        self.vgg_loss = self.vgg_scaling * (2 * tf.nn.l2_loss(self.real_vgg[CONTENT_LAYER] - self.gen_vgg[CONTENT_LAYER]) / (_tensor_size(self.real_vgg[CONTENT_LAYER]))) / self.batch_size
 
         #拼接图像： 线条图像、笔触图像、真实图像，共有10个通道
         #拼接图像是为了能将线图传进去，作为条件c
@@ -114,9 +129,9 @@ class Color():
         tv_x_size = self._tensor_size(self.generated_images[:, :, 1:, :])
         y_tv = tf.nn.l2_loss(self.generated_images[:, 1:, :, :] - self.generated_images[:, :self.image_size - 1, :, :])
         x_tv = tf.nn.l2_loss(self.generated_images[:, :, 1:, :] - self.generated_images[:, :, :self.image_size - 1, :])
-        self.tv_loss = 6 * self.l1_scaling * (x_tv / tv_x_size + y_tv / tv_y_size) / self.batch_size
+        self.tv_loss = self.tv_scaling * (x_tv / tv_x_size + y_tv / tv_y_size) / self.batch_size
 
-        self.g_loss += (self.tv_loss + self.l1_loss)
+        self.g_loss += (self.tv_loss + self.l1_loss + self.vgg_loss)
 
         t_vars = tf.trainable_variables()
 
@@ -277,13 +292,13 @@ class Color():
                 # self.sess.run(self.clip_d_op)
 
                 #if i % 2 == 0:
-                g_loss, _ = self.sess.run([self.g_loss, self.g_optim],
-                                          feed_dict={self.real_images: batch_normalized,
-                                                     self.line_images: batch_edge,
-                                                     self.color_images: batch_colors,
-                                                     self.line_features: batch_features})
+                g_loss, _, l1_loss, tv_loss, vgg_loss = self.sess.run([self.g_loss, self.g_optim, self.l1_loss, self.tv_loss, self.vgg_loss],
+                                                          feed_dict={self.real_images: batch_normalized,
+                                                                     self.line_images: batch_edge,
+                                                                     self.color_images: batch_colors,
+                                                                     self.line_features: batch_features})
 
-                print("%d: [%d / %d] d_loss %f, g_loss %f" % (e, i, (datalen / self.batch_size), d_loss, g_loss))
+                print("%d: [%d / %d] d_loss %f, g_loss %f, l1_loss %f, tv_loss %f, vgg_loss %f" % (e, i, (datalen / self.batch_size), d_loss, g_loss, l1_loss, tv_loss, vgg_loss))
 
                 # 每50次打印一下生成器的生成图片结果
                 if i % 50 == 0:

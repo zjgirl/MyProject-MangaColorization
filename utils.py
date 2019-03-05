@@ -137,3 +137,8 @@ def colorGen(cimg, imagesize = 256, blocksize = 8):
         randy = randint(0, imagesize - blocksize - 1)
         hint[randx:randx + blocksize, randy:randy + blocksize] = np.mean(np.mean(cimg[randx:randx + blocksize, randy:randy + blocksize], axis=0),axis=0)
     return hint
+
+def _tensor_size(tensor):
+    from operator import mul
+    from functools import reduce
+    return reduce(mul, (d.value for d in tensor.get_shape()), 1)
