@@ -353,9 +353,9 @@ class Color():
 
         self.loadmodel(False)
 
-        data = glob(os.path.join("imgs", "cuty.jpg"))
+        data = glob(os.path.join("../test_data", "*_o.png"))
 
-        data_m = glob(os.path.join("imgs", "cuty_m.jpg"))
+        data_m = glob(os.path.join("../test_data", "*_m.png"))
 
         datalen = len(data)
 
@@ -375,9 +375,10 @@ class Color():
 
             batch_edge = np.expand_dims(batch_edge, 3)
 
-            batch_colors = np.array([colorGen(ba) for ba in batch_m]) / 255.0
+            isColored = abs(batch_m / 255.0 - batch_normalized) > 0.1
+            batch_colors = get_colorPic(isColored, batch_m / 255.0)
             
-			# 特征图,需要计算扩展的维度
+            # 特征图,需要计算扩展的维度
             batch_features = self.sess.run(self.feature_tensor, feed_dict={self.images_tensor: batch_edge})
             feashape = np.shape(batch_features)
             expandNum = int((feashape[1] - (self.feature_size - feashape[1])) // 2 ) # 想要拼接中间的部分，获得应该从第几行开始抽取
@@ -404,7 +405,7 @@ class Color():
 
         model_name = "model"
 
-        model_dir = "tr/download"
+        model_dir = ""
 
         checkpoint_dir = os.path.join(checkpoint_dir, model_dir)
 
@@ -426,7 +427,7 @@ class Color():
 
         print(" [*] Reading checkpoint...")
 
-        model_dir = "tr"
+        model_dir = ""
 
         checkpoint_dir = os.path.join(checkpoint_dir, model_dir)
 
