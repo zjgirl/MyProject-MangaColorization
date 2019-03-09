@@ -142,3 +142,6 @@ def _tensor_size(tensor):
     from operator import mul
     from functools import reduce
     return reduce(mul, (d.value for d in tensor.get_shape()), 1)
+
+def gausBlur(image):
+    return cv2.blur(image, (4, 4))

@@ -366,8 +366,8 @@ class Color():
             batch_files = data[i*self.batch_size:(i+1)*self.batch_size]
             batch_files_m = data_m[i*self.batch_size:(i+1)*self.batch_size]
 
-            batch = np.array([cv2.resize(imread(batch_file), (512,512)) for batch_file in batch_files])
-            batch_m = np.array([cv2.resize(imread(batch_file_m), (512,512)) for batch_file_m in batch_files_m])
+            batch = np.array([cv2.resize(imread(batch_file), (self.image_size,self.image_size)) for batch_file in batch_files])
+            batch_m = np.array([cv2.resize(imread(batch_file_m), (self.image_size,self.image_size)) for batch_file_m in batch_files_m])
 
             batch_normalized = batch/255.0 #实际上生成器不会用到这个
 
@@ -392,6 +392,10 @@ class Color():
 
             recreation = self.sess.run(self.generated_images, feed_dict={self.real_images: batch_normalized, self.line_images: batch_edge, self.color_images: batch_colors, self.line_features: batch_features})
 
+            #for shadding
+            shading = np.tile(np.expand_dims(np.expand_dims(gausBlur(batch_edge[0] * 255), axis=0),axis=3),(1, 1, 1, 3))
+            recreation = (recreation * 255 - (255 - shading) / 3) / 255.0
+
             ims("results/sample_"+str(i)+".jpg",merge_color(recreation, [self.batch_size_sqrt, self.batch_size_sqrt]))
 
             #ims("results/sample_"+str(i)+"_origin.jpg",merge_color(batch_normalized, [self.batch_size_sqrt, self.batch_size_sqrt]))
@@ -405,7 +409,7 @@ class Color():
 
         model_name = "model"
 
-        model_dir = ""
+        model_dir = "10"
 
         checkpoint_dir = os.path.join(checkpoint_dir, model_dir)
 
@@ -427,7 +431,7 @@ class Color():
 
         print(" [*] Reading checkpoint...")
 
-        model_dir = ""
+        model_dir = "10"
 
         checkpoint_dir = os.path.join(checkpoint_dir, model_dir)
 
