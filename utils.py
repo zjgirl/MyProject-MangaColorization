@@ -4,8 +4,10 @@ import cv2
 from glob import glob
 from random import randint
 import os
+from sklearn.cluster import KMeans
 
-root_data = "./tfrecords/"
+kmeans_label_path = "kmeans_path/kmeans_label_path/"
+kmeans_cluster_path = "kmeans_path/kmeans_cluster_path/"
 NUM_FOLDER = 28
 
 class layer_norm(object):
@@ -65,6 +67,10 @@ def deconv2d(input_, output_shape,
             return deconv, w, biases
         else:
             return deconv
+
+def fc(input, output_dim, name):
+    with tf.variable_scope(name):
+        return tf.layers.dense(input, output_dim, activation=tf.nn.relu, kernel_initializer=tf.random_normal_initializer(0.02),trainable=True, name=name)
 
 #leakyRelu激活函数的简单实现
 def lrelu(x, leak=0.2, name="lrelu"):
@@ -145,3 +151,46 @@ def _tensor_size(tensor):
 
 def gausBlur(image):
     return cv2.blur(image, (4, 4))
+
+
+# img: w x h x c
+def kmeans_label(img, n, n_clusters):
+    shape = np.shape(img)
+    if not os.path.exists(kmeans_label_path + str(n)):
+        img_reshape = img.reshape(shape[0] * shape[1], -1)
+        k_means =  KMeans(n_clusters=n_clusters, random_state=0).fit_predict(img_reshape)
+        kmeans_string = ','.join(str(x) for x in k_means)
+        with open(kmeans_label_path + str(n), 'w') as file:
+            file.write(kmeans_string)
+    else:
+        with open(kmeans_label_path + str(n), 'r') as file:
+            string = file.read()
+        k_means = np.array([int(x) for x in string.split(',')])
+
+    return k_means.reshape(shape[0], shape[1], -1)
+
+def kmeans_cluster(img, n, n_clusters):
+    shape = np.shape(img)
+    if not os.path.exists(kmeans_cluster_path + str(n)):
+        img_reshape = img.reshape(shape[0] * shape[1], -1)
+        k_means =  KMeans(n_clusters=n_clusters, random_state=0).fit(img_reshape)
+        cluster_center = k_means.cluster_centers_
+        kmeans_string = ','.join(str(i) for x in cluster_center for i in x)
+        with open(kmeans_cluster_path + str(n), 'w') as file:
+            file.write(kmeans_string)
+    else:
+        with open(kmeans_cluster_path + str(n), 'r') as file:
+            string = file.read()
+        cluster_center = np.array([float(x) for x in string.split(',')])
+        cluster_center = cluster_center.reshape((n_clusters, 3))
+    return cluster_center
+
+# batch
+def kmeans(kmeans_label, kmeans_cluster):
+    b, w, h, _ = kmeans_label.shape
+    kmeans_batch = []
+    for i in range(b):
+        label = kmeans_label[i].reshape(-1)
+        kmeans = np.array([kmeans_cluster[i][lab] for lab in label])
+        kmeans_batch.append(kmeans.reshape(w, h, -1))
+    return np.array(kmeans_batch)
