@@ -1,21 +1,10 @@
+# coding=utf-8
 import numpy as np
 import math
 import cv2
-
-#sigma_d, sigma_r顾名思义是gd和gr的高斯核，rad是指邻域范围（-rad，rad）
-def main(noisy, flash, sigma_d, sigma_r, rad, savename):
-	A = cv2.imread("./" + noisy, cv2.IMREAD_COLOR)
-	F = cv2.imread("./" + flash, cv2.IMREAD_COLOR)
-	A_channels = cv2.split(A) #将3个通道分开，（512，512，3）-> (3, 512,512)
-	F_channels = cv2.split(F)
-	height = A.shape[0]
-	width = A.shape[1]
-	img = cv2.split(A)
-	for i in range(3):
-		print(i)
-		img[i]  =joint_bilateral(A_channels[i], F_channels[i], img[i], rad, sigma_d, sigma_r, height, width)
-	img = cv2.merge(img)
-	cv2.imwrite(savename, img)
+from glob import glob
+import os
+from PIL import Image,ImageEnhance
 
 def joint_bilateral(A, F, img, rad, sigma_d, sigma_r, height, width):
 	diam = rad * 2 + 1
@@ -69,5 +58,37 @@ def gaussian_mask(mask, sigma):
 def gaussian(x, sigma):
 	return math.exp((-1 * x **2) / (2 * sigma ** 2))# / (sigma * (2 * math.pi) ** 0.5)
 
+def improve_S_bright(file, sketch):
+    shape = np.shape(sketch)
+    img = Image.fromarray(np.uint8(file))
+    img_improveS = ImageEnhance.Color(img).enhance(1.5) #提高饱和度
+    img_S_contrast = ImageEnhance.Brightness(img_improveS).enhance(1.03) #再提高亮度
+    dealt = np.array(img_S_contrast)
+
+    img_S_constrat_sketch = np.zeros(shape, dtype=np.uint8)
+    img_S_constrat_sketch[:] = sketch[:] * 0.3 + dealt[:] * 0.7
+    return img_S_constrat_sketch
+
+# sigma_d, sigma_r顾名思义是gd和gr的高斯核，rad是指邻域范围（-rad，rad）
+def main(noisy, flash, sigma_d, sigma_r, rad, savename):
+    A = cv2.imread("./" + noisy, cv2.IMREAD_COLOR)
+    F = cv2.imread("./" + flash, cv2.IMREAD_COLOR)
+    A_channels = cv2.split(A)  # 将3个通道分开，（512，512，3）-> (3, 512,512)
+    F_channels = cv2.split(F)
+    height = A.shape[0]
+    width = A.shape[1]
+    img = cv2.split(A)
+    for i in range(3):
+        print(i)
+        img[i] = joint_bilateral(A_channels[i], F_channels[i], img[i], rad, sigma_d, sigma_r, height, width)
+    img = cv2.merge(img)
+
+    img = improve_S_bright(img, F)
+
+    cv2.imwrite(savename, img)
+
 if __name__ == '__main__':
-	main("testa.jpg", "testb.jpg", 5, 1, 20, "./test_line_5_1_20.jpg")
+    data_a = glob(os.path.join("results/bilateral_filter", "*_a.*")) #着色图
+    data_b = glob(os.path.join("results/bilateral_filter", "*_b.*")) #线稿图
+    for i in range(len(data_a)):
+        main(data_a[i], data_b[i], 3, 1, 20, "results/bilateral_filter/filter/" + str(i) + "_filter.jpg")
