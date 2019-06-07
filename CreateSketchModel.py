@@ -7,9 +7,9 @@ from tensorflow.python.platform import gfile
 pb_file_path = "SketchANetModel/SketchModel.pb"
 mat_path = 'SketchANetModel/model_with_order_info_256.mat'
 
-def createModel(batchSize,imageSize):
+def createModel(batchSize, width, height):
     weights, biases = load_pretrained_model(mat_path)
-    images = tf.placeholder(tf.float32, [batchSize,imageSize,imageSize,1],name="images")
+    images = tf.placeholder(tf.float32, [batchSize,height,width,1],name="images")
 
     _, feature = inference(images, dropout_prob=1.0, pretrained=(weights, biases), visualize=False)
     '''

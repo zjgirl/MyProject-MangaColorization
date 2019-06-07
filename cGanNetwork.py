@@ -1,5 +1,4 @@
-﻿
-import tensorflow as tf
+﻿import tensorflow as tf
 import numpy as np
 import os
 from glob import glob
@@ -10,6 +9,7 @@ import utils
 from utils import *
 from utils import _tensor_size
 from vgg19_net import VGG
+from CreateSketchModel import *
 
 imgs = "E:\\1myproject\\ColorNet\\code\\deepColor\\deepColor\\imgs_download\\imgs"
 imgs_edge = "E:\\1myproject\\ColorNet\\code\\deepColor\\deepColor\\imgs_download\\imgs_edge"
@@ -21,7 +21,7 @@ STYLE_LAYERS = ('relu1_2', 'relu2_2', 'relu3_3', 'relu4_3')
 
 class Color():
 
-    def __init__(self, model_tensor=(None,None), imgsize=256, batchsize=16):
+    def __init__(self, model_tensor=(None,None), width=256, height=256, batchsize=16):
 
         self.images_tensor, self.feature_tensor = model_tensor
 
@@ -29,11 +29,12 @@ class Color():
 
         self.batch_size_sqrt = int(math.sqrt(self.batch_size))
 
-        self.image_size = imgsize
+        self.width = width
 
-        self.output_size = imgsize
+        self.height = height
 
-        self.feature_size = imgsize // 8 #特征size，在输入的第三层加入特征
+        self.feature_height = int( int(int(height / 2 +0.5) / 2 + 0.5) / 2 +0.5)#特征size，在输入的第三层加入特征
+        self.feature_width = int( int(int(width / 2 +0.5) / 2 + 0.5) / 2 +0.5)
 
         self.feature_dim = 256 #特征深度
 
@@ -63,14 +64,14 @@ class Color():
 
         self.d_bn4 = batch_norm(name='d_bn4')
 
-        self.line_images = tf.placeholder(tf.float32, [self.batch_size, self.image_size, self.image_size, self.input_colors])
+        self.line_images = tf.placeholder(tf.float32, [self.batch_size, self.height, self.width, self.input_colors])
 
-        self.color_images = tf.placeholder(tf.float32, [self.batch_size, self.image_size, self.image_size, self.input_colors2])
+        self.color_images = tf.placeholder(tf.float32, [self.batch_size, self.height, self.width, self.input_colors2])
 
-        self.real_images = tf.placeholder(tf.float32, [self.batch_size, self.image_size, self.image_size, self.output_colors])
+        self.real_images = tf.placeholder(tf.float32, [self.batch_size, self.height, self.width, self.output_colors])
 
         #添加特征输入的placeholder，将在生成器的第3层加入特征
-        self.line_features = tf.placeholder(tf.float32, [self.batch_size, self.feature_size, self.feature_size, self.feature_dim])
+        self.line_features = tf.placeholder(tf.float32, [self.batch_size, self.feature_height, self.feature_width, self.feature_dim])
 
         #下面的拼接相当于cGAN中的条件，条件包括线稿图和笔触图
 
@@ -118,17 +119,10 @@ class Color():
         self.l1_loss =  self.l1_scaling * tf.reduce_mean(tf.abs(self.real_images - self.generated_images))
 
         # 全局方差损失
-        '''
-        self.generated_orig = tf.slice(self.generated_images, [0, 0, 0, 0], [-1, self.image_size-1, self.image_size-1, -1])
-        self.generated_right = tf.slice(self.generated_images, [0, 0, 1, 0], [-1, self.image_size-1, -1, -1])
-        self.generated_down = tf.slice(self.generated_images, [0, 1, 0, 0], [-1, -1, self.image_size-1, -1])
-        self.tv_loss = 1e-3 * tf.reduce_sum(tf.sqrt(tf.square(self.generated_orig - self.generated_right) + tf.square(
-            self.generated_orig - self.generated_down)))
-        '''
         tv_y_size = self._tensor_size(self.generated_images[:, 1:, :, :])
         tv_x_size = self._tensor_size(self.generated_images[:, :, 1:, :])
-        y_tv = tf.nn.l2_loss(self.generated_images[:, 1:, :, :] - self.generated_images[:, :self.image_size - 1, :, :])
-        x_tv = tf.nn.l2_loss(self.generated_images[:, :, 1:, :] - self.generated_images[:, :, :self.image_size - 1, :])
+        y_tv = tf.nn.l2_loss(self.generated_images[:, 1:, :, :] - self.generated_images[:, :self.height - 1, :, :])
+        x_tv = tf.nn.l2_loss(self.generated_images[:, :, 1:, :] - self.generated_images[:, :, :self.width - 1, :])
         self.tv_loss = self.tv_scaling * (x_tv / tv_x_size + y_tv / tv_y_size) / self.batch_size
 
         self.g_loss += (self.tv_loss + self.l1_loss + self.vgg_loss)
@@ -177,8 +171,10 @@ class Color():
     #生成器，输入是线图（+模糊图）
     #先下采样再上采样，U-Net网络结构
     def generator(self, img_in):
-        s = self.output_size #256
-        s2, s4, s8, s16, s32, s64, s128 = int(s/2), int(s/4), int(s/8), int(s/16), int(s/32), int(s/64), int(s/128)
+        sw = self.width ; sh = self.height
+        sw2 = int(sw/2+0.5); sw4 = int(sw2/2+0.5);sw8 = int(sw4/2+0.5); sw16 = int(sw8/2+0.5)
+        sh2 = int(sh / 2 + 0.5); sh4 = int(sh2 / 2 + 0.5); sh8 = int(sh4 / 2 + 0.5); sh16 = int(sh8 / 2 + 0.5)
+
         # image is (256 x 256 x input_c_dim)
         e1 = conv2d(img_in, self.gf_dim, name='g_e1_conv') # e1 is (128 x 128 x 64)
         e2 = bn(conv2d(lrelu(e1), self.gf_dim*2, name='g_e2_conv')) # e2 is (64 x 64 x 128)
@@ -192,29 +188,29 @@ class Color():
         e5 = bn(conv2d(lrelu(e4), self.gf_dim*8, name='g_e5_conv')) # e5 is (8 x 8 x 512)
 
 
-        self.d4, self.d4_w, self.d4_b = deconv2d(tf.nn.relu(e5), [self.batch_size, s16, s16, self.gf_dim*8], name='g_d4', with_w=True) #16*16*512
+        self.d4, self.d4_w, self.d4_b = deconv2d(tf.nn.relu(e5), [self.batch_size, sh16, sw16, self.gf_dim*8], name='g_d4', with_w=True) #16*16*512
         d4 = bn(self.d4) #bn是对每一层的参数进行标准化
 
         #add skip connections
         d4 = tf.concat((d4, e4),3) #将还原的图像与特征图像进行拼接，U型结构的特点，为了精准定位
         # d4 is (16 x 16 x self.gf_dim*8*2)
 
-        self.d5, self.d5_w, self.d5_b = deconv2d(tf.nn.relu(d4), [self.batch_size, s8, s8, self.gf_dim*4], name='g_d5', with_w=True)
+        self.d5, self.d5_w, self.d5_b = deconv2d(tf.nn.relu(d4), [self.batch_size, sh8, sw8, self.gf_dim*4], name='g_d5', with_w=True)
         d5 = bn(self.d5)
         d5 = tf.concat((d5, en2),3)
         # d5 is (32 x 32 x self.gf_dim*4*2)
 
-        self.d6, self.d6_w, self.d6_b = deconv2d(tf.nn.relu(d5), [self.batch_size, s4, s4, self.gf_dim*2], name='g_d6', with_w=True)
+        self.d6, self.d6_w, self.d6_b = deconv2d(tf.nn.relu(d5), [self.batch_size, sh4, sw4, self.gf_dim*2], name='g_d6', with_w=True)
         d6 = bn(self.d6)
         d6 = tf.concat((d6, e2), 3)
         # d6 is (64 x 64 x self.gf_dim*2*2)
 
-        self.d7, self.d7_w, self.d7_b = deconv2d(tf.nn.relu(d6), [self.batch_size, s2, s2, self.gf_dim], name='g_d7', with_w=True)
+        self.d7, self.d7_w, self.d7_b = deconv2d(tf.nn.relu(d6), [self.batch_size, sh2, sw2, self.gf_dim], name='g_d7', with_w=True)
         d7 = bn(self.d7)
         d7 = tf.concat((d7, e1), 3)
         # d7 is (128 x 128 x self.gf_dim*1*2)
 
-        self.d8, self.d8_w, self.d8_b = deconv2d(tf.nn.relu(d7), [self.batch_size, s, s, self.output_colors], name='g_d8', with_w=True) #最后一层输出为3通道图像
+        self.d8, self.d8_w, self.d8_b = deconv2d(tf.nn.relu(d7), [self.batch_size, sh, sw, self.output_colors], name='g_d8', with_w=True) #最后一层输出为3通道图像
         # d8 is (256 x 256 x output_c_dim) 最后的生成图像是3个通道的
 
         return tf.nn.tanh(self.d8) #最后一层的激活函数为tanh函数
@@ -278,9 +274,10 @@ class Color():
                 # 特征图,需要计算扩展的维度
                 batch_features = self.sess.run(self.feature_tensor,feed_dict={self.images_tensor:batch_edge})
                 feashape = np.shape(batch_features)
-                expandNum = int((feashape[1]-(self.feature_size - feashape[1]))//2) #想要拼接中间的部分，获得应该从第几行开始抽取
-                concate_1 = np.concatenate((batch_features, batch_features[:, expandNum:(feashape[1] - expandNum), :, :]), 1)
-                batch_features = np.concatenate((concate_1, concate_1[:, :, expandNum:(feashape[1] - expandNum), :]), 2)
+                expandHeight = int((feashape[1]-(self.feature_height - feashape[1]))//2) #想要拼接中间的部分，获得应该从第几行开始抽取
+                expandWidth = int((feashape[2]-(self.feature_width - feashape[2]))//2)
+                concate_1 = np.concatenate((batch_features, batch_features[:, expandHeight:(feashape[1] - expandHeight), :, :]), 1)
+                batch_features = np.concatenate((concate_1, concate_1[:, :, expandWidth:(feashape[2] - expandWidth), :]), 2)
 
                 # feed进去的依次是原彩色图、线图、模糊图，这里是在分别训练判别器和生成器
 
@@ -353,21 +350,19 @@ class Color():
 
         self.loadmodel(False)
 
-        data = glob(os.path.join("../test_data", "*_o.png"))
+        data = glob(os.path.join("../test_data", "*_o.*"))
 
-        data_m = glob(os.path.join("../test_data", "*_m.png"))
+        data_m = glob(os.path.join("../test_data", "*_m.*"))
 
         datalen = len(data)
-
-
 
         for i in range(min(100,datalen // self.batch_size)):
 
             batch_files = data[i*self.batch_size:(i+1)*self.batch_size]
             batch_files_m = data_m[i*self.batch_size:(i+1)*self.batch_size]
 
-            batch = np.array([cv2.resize(imread(batch_file), (self.image_size,self.image_size)) for batch_file in batch_files])
-            batch_m = np.array([cv2.resize(imread(batch_file_m), (self.image_size,self.image_size)) for batch_file_m in batch_files_m])
+            batch = np.array([cv2.resize(imread(batch_file), (self.height,self.width)) for batch_file in batch_files])
+            batch_m = np.array([cv2.resize(imread(batch_file_m), (self.height,self.width)) for batch_file_m in batch_files_m])
 
             batch_normalized = batch/255.0 #实际上生成器不会用到这个
 
@@ -381,16 +376,20 @@ class Color():
             # 特征图,需要计算扩展的维度
             batch_features = self.sess.run(self.feature_tensor, feed_dict={self.images_tensor: batch_edge})
             feashape = np.shape(batch_features)
-            expandNum = int((feashape[1] - (self.feature_size - feashape[1])) // 2 ) # 想要拼接中间的部分，获得应该从第几行开始抽取
-            concate_1 = np.concatenate((batch_features, batch_features[:, expandNum:(feashape[1] - expandNum), :, :]), 1)
-            batch_features = np.concatenate((concate_1, concate_1[:, :, expandNum:(feashape[1] - expandNum), :]), 2)
+            expandHeight = int((feashape[1] - (self.feature_height - feashape[1])) // 2)  # 想要拼接中间的部分，获得应该从第几行开始抽取
+            expandWidth = int((feashape[2] - (self.feature_width - feashape[2])) // 2)
+            concate_1 = np.concatenate((batch_features, batch_features[:, expandHeight:(feashape[1] - expandHeight), :, :]), 1)
+            batch_features = np.concatenate((concate_1, concate_1[:, :, expandWidth:(feashape[2] - expandWidth), :]), 2)
 
             #batch_edge = batch_normalized[:,:,:,0]
             #batch_edge = np.expand_dims(batch_edge, 3)
 
             ims("results/colors_"+str(i)+".jpg",merge_color(batch_colors, [self.batch_size_sqrt, self.batch_size_sqrt]))
 
-            recreation = self.sess.run(self.generated_images, feed_dict={self.real_images: batch_normalized, self.line_images: batch_edge, self.color_images: batch_colors, self.line_features: batch_features})
+            recreation = self.sess.run(self.generated_images, feed_dict={self.real_images: batch_normalized,
+                                                                         self.line_images: batch_edge,
+                                                                         self.color_images: batch_colors,
+                                                                         self.line_features: batch_features})
 
             #for shadding
             shading = np.tile(np.expand_dims(np.expand_dims(gausBlur(batch_edge[0] * 255), axis=0),axis=3),(1, 1, 1, 3))
@@ -398,18 +397,14 @@ class Color():
 
             ims("results/sample_"+str(i)+".jpg",merge_color(recreation, [self.batch_size_sqrt, self.batch_size_sqrt]))
 
-            #ims("results/sample_"+str(i)+"_origin.jpg",merge_color(batch_normalized, [self.batch_size_sqrt, self.batch_size_sqrt]))
-
             ims("results/edge_"+str(i)+"_line.jpg",merge_color(batch_edge, [self.batch_size_sqrt, self.batch_size_sqrt]))
-
-            #ims("results/sample_"+str(i)+"_color.jpg",merge_color(batch_colors, [self.batch_size_sqrt, self.batch_size_sqrt]))
 
 
     def save(self, checkpoint_dir, step):
 
-        model_name = "model"
+        model_name = ""
 
-        model_dir = "10"
+        model_dir = "base/19"
 
         checkpoint_dir = os.path.join(checkpoint_dir, model_dir)
 
@@ -431,7 +426,7 @@ class Color():
 
         print(" [*] Reading checkpoint...")
 
-        model_dir = "10"
+        model_dir = "base/19"
 
         checkpoint_dir = os.path.join(checkpoint_dir, model_dir)
 
