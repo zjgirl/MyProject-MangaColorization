@@ -188,14 +188,21 @@ class Color():
         e5 = bn(conv2d(lrelu(e4), self.gf_dim*8, name='g_e5_conv')) # e5 is (8 x 8 x 512)
 
 
-        self.d4, self.d4_w, self.d4_b = deconv2d(tf.nn.relu(e5), [self.batch_size, sh16, sw16, self.gf_dim*8], name='g_d4', with_w=True) #16*16*512
+        #self.d4, self.d4_w, self.d4_b = deconv2d(tf.nn.relu(e5), [self.batch_size, sh16, sw16, self.gf_dim*8], name='g_d4', with_w=True) #16*16*512
+        # 1. deconv -> resize + conv
+        self.d4 = tf.image.resize_images(e5,[sh16, sw16],method=tf.image.ResizeMethod.NEAREST_NEIGHBOR) #(16 x 16 x 512)
+        self.d4 = conv2d(lrelu(self.d4), self.gf_dim * 8, d_h=1, d_w=1, name='g_d4')  # （16 x 16 x 512 ）
         d4 = bn(self.d4) #bn是对每一层的参数进行标准化
 
         #add skip connections
         d4 = tf.concat((d4, e4),3) #将还原的图像与特征图像进行拼接，U型结构的特点，为了精准定位
         # d4 is (16 x 16 x self.gf_dim*8*2)
 
-        self.d5, self.d5_w, self.d5_b = deconv2d(tf.nn.relu(d4), [self.batch_size, sh8, sw8, self.gf_dim*4], name='g_d5', with_w=True)
+        #self.d5, self.d5_w, self.d5_b = deconv2d(tf.nn.relu(d4), [self.batch_size, sh8, sw8, self.gf_dim*4], name='g_d5', with_w=True)
+        # 2. deconv -> resize + conv
+        self.d5 = tf.image.resize_images(d4, [sh8, sw8], method=tf.image.ResizeMethod.NEAREST_NEIGHBOR)  # (32 x 32 x 1024)
+        self.d5 = conv2d(lrelu(self.d5), self.gf_dim * 4, d_h=1, d_w=1, name='g_d5') # （32 x 32 x 256 ）
+
         d5 = bn(self.d5)
         d5 = tf.concat((d5, en2),3)
         # d5 is (32 x 32 x self.gf_dim*4*2)
@@ -404,7 +411,7 @@ class Color():
 
         model_name = ""
 
-        model_dir = "base/19"
+        model_dir = "checkboard"
 
         checkpoint_dir = os.path.join(checkpoint_dir, model_dir)
 
@@ -426,7 +433,7 @@ class Color():
 
         print(" [*] Reading checkpoint...")
 
-        model_dir = "base/19"
+        model_dir = "checkboard"
 
         checkpoint_dir = os.path.join(checkpoint_dir, model_dir)
 
