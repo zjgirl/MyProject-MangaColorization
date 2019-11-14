@@ -320,7 +320,7 @@ class Color():
 													  self.line_images: batch_edge,
                                                       self.color_images: batch_colors,
 													  self.line_features: batch_features})  # 计算需要写入的日志数据
-                    self.writer.add_summary(result, step)  # 将日志数据写入文件
+                    #self.writer.add_summary(result, step)  # 将日志数据写入文件
                 if (e != 0 and i == 0) or (e == 9 and i == datalen // self.batch_size - 1):
                     self.save("./checkpoint", step)
 
@@ -331,7 +331,7 @@ class Color():
         self.sess.run(tf.global_variables_initializer())
 
         self.merged = tf.summary.merge_all()  # 将图形、训练过程等数据合并在一起
-        self.writer = tf.summary.FileWriter('logs', self.sess.graph)  # 将训练日志写入到logs文件夹下
+        #self.writer = tf.summary.FileWriter('logs', self.sess.graph)  # 将训练日志写入到logs文件夹下
 
         if load_discrim:
 
@@ -365,11 +365,15 @@ class Color():
 
         for i in range(min(100,datalen // self.batch_size)):
 
-            batch_files = data[i*self.batch_size:(i+1)*self.batch_size]
-            batch_files_m = data_m[i*self.batch_size:(i+1)*self.batch_size]
+            batch_files = data[i]
+            batch_files_m = data_m[i]
 
-            batch = np.array([cv2.resize(imread(batch_file), (self.height,self.width)) for batch_file in batch_files])
-            batch_m = np.array([cv2.resize(imread(batch_file_m), (self.height,self.width)) for batch_file_m in batch_files_m])
+            batch_file = imread(batch_files)
+            batch_file_m = imread(batch_files_m)
+            h, w, c = np.shape(batch_file) #原来的宽高
+
+            batch = np.array([cv2.resize(batch_file, (self.height,self.width))])
+            batch_m = np.array([cv2.resize(batch_file_m, (self.height,self.width))])
 
             batch_normalized = batch/255.0 #实际上生成器不会用到这个
 
@@ -379,7 +383,7 @@ class Color():
 
             isColored = abs(batch_m / 255.0 - batch_normalized) > 0.1
             batch_colors = get_colorPic(isColored, batch_m / 255.0)
-            
+
             # 特征图,需要计算扩展的维度
             batch_features = self.sess.run(self.feature_tensor, feed_dict={self.images_tensor: batch_edge})
             feashape = np.shape(batch_features)
@@ -402,6 +406,7 @@ class Color():
             shading = np.tile(np.expand_dims(np.expand_dims(gausBlur(batch_edge[0] * 255), axis=0),axis=3),(1, 1, 1, 3))
             recreation = (recreation * 255 - (255 - shading) / 3) / 255.0
 
+            recreation = np.expand_dims(cv2.resize(recreation[0],(w, h)),0) #恢复到原来的分辨率
             ims("results/sample_"+str(i)+".jpg",merge_color(recreation, [self.batch_size_sqrt, self.batch_size_sqrt]))
 
             ims("results/edge_"+str(i)+"_line.jpg",merge_color(batch_edge, [self.batch_size_sqrt, self.batch_size_sqrt]))

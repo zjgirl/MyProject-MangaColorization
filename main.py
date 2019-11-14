@@ -8,7 +8,7 @@ from utils import *
 
 if __name__ == '__main__':
 
-    print("please input train / sample512 / sample ?")
+    print("please input train / sample ?")
 
     cmd = input()
 
@@ -18,17 +18,18 @@ if __name__ == '__main__':
         c = Color(model_tensor=(images_tensor, feature_tensor))
         c.train()
 
-    elif cmd == "sample512":
-        createModel(batchSize=1, width=512, height=512)
+    elif cmd == "sample":
+        wh = 512
+        createModel(batchSize=1, width=wh, height=wh)
         images_tensor, feature_tensor = readModel()
-        c = Color(model_tensor=(images_tensor, feature_tensor),width=512, height=512,batchsize=1)
+        c = Color(model_tensor=(images_tensor, feature_tensor),width=wh, height=wh,batchsize=1)
         c.sample()
-
+    '''
     elif cmd == "sample":
 
-        data = glob(os.path.join("../test_data", "*_o.png"))
+        data = glob(os.path.join("../test_data", "125_o.*"))
 
-        data_m = glob(os.path.join("../test_data", "*_m.png"))
+        data_m = glob(os.path.join("../test_data", "125_m.*"))
 
         datalen = len(data)
 
@@ -89,3 +90,4 @@ if __name__ == '__main__':
     else:
 
         print ("Usage: python main.py [train, sample]")
+    '''

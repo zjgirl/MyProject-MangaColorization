@@ -73,8 +73,8 @@ def improve_S_bright(file, sketch):
 def main(noisy, flash, sigma_d, sigma_r, rad, savename):
     A = cv2.imread("./" + noisy, cv2.IMREAD_COLOR)
     F = cv2.imread("./" + flash, cv2.IMREAD_COLOR)
-    A = cv2.resize(A, (512, 512))
-    F = cv2.resize(F, (512, 512))
+    #A = cv2.resize(A, (512, 512))
+    #F = cv2.resize(F, (512, 512))
     A_channels = cv2.split(A)  # 将3个通道分开，（512，512，3）-> (3, 512,512)
     F_channels = cv2.split(F)
     height = A.shape[0]
@@ -90,7 +90,15 @@ def main(noisy, flash, sigma_d, sigma_r, rad, savename):
     cv2.imwrite(savename, img)
 
 if __name__ == '__main__':
-    data_a = glob(os.path.join("results/bilateral_filter", "sample_*.*")) #着色图
-    data_b = glob(os.path.join("results/bilateral_filter", "sketch_*.*")) #线稿图
+    '''
+    img = cv2.imread('./resize.jpg')
+    for i in range(10):
+        w, h, c = np.shape(img)
+        img = cv2.resize(img, (w*2, h*2))
+        img = cv2.resize(img, (w, h))
+    cv2.imwrite('./resize_out.jpg', img)
+    '''
+    data_a = glob(os.path.join("results/bilateral_filter", "sample_0.*")) #着色图
+    data_b = glob(os.path.join("results/bilateral_filter", "sketch_0.*")) #线稿图
     for i in range(len(data_a)):
         main(data_a[i], data_b[i], 3, 1, 20, "results/bilateral_filter/filter/" + str(i) + "_filter.jpg")
